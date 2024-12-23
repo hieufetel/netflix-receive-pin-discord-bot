@@ -6,57 +6,60 @@ import imaplib
 import email
 import requests
 from bs4 import BeautifulSoup
+from dotenv import load_dotenv
+
+load_dotenv()
 
 bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
 TOKEN = os.getenv("TOKEN")
 EMAIL = str(os.getenv("EMAIL"))
 PASSWORD = str(os.getenv("PASSWORD"))
 SERVER = "imap.gmail.com"
-
 VERIFY_LINK_REGEX = re.compile(
     r"\[(https://www\.netflix\.com/account/travel/verify[^\]]*)\]"
 )
-
 def get_verify_link():
     mail = imaplib.IMAP4_SSL(SERVER)
     mail.login(EMAIL, PASSWORD)
     mail.select("Inbox")
     status, messages = mail.search(
-        None, '(FROM "info@account.netflix.com" SUBJECT "temporary access code")'
+        None, '(FROM "info@account.netflix.com")'
     )
 
     if status != "OK":
         print("No new emails")
         return None
+    SUBJECT_REGEX = re.compile(r"(?=.*temporary)(?=.*access)(?=.*code)", re.IGNORECASE)
+    mail_ids = messages[0].split()[::-1]
+    for mail_id in mail_ids:
+        status, message_data = mail.fetch(mail_id, "(RFC822)")
+        if status != "OK":
+            print("Error fetching message")
+            return None
 
-    latest_mail_id = messages[0].split()[-1]
-    status, message_data = mail.fetch(latest_mail_id, "(RFC822)")
-
-    if status != "OK":
-        print("Error fetching message")
-        return None
-
-    msg = email.message_from_bytes(message_data[0][1])
-    if msg.is_multipart():
-        for part in msg.walk():
-            if part.get_content_type() == "text/plain":
-                content = part.get_payload(decode=True).decode(
-                    "utf-8", errors="replace"
-                )
+        msg = email.message_from_bytes(message_data[0][1])
+        subject = msg["subject"]
+        if subject and SUBJECT_REGEX.search(subject):
+            if msg.is_multipart():
+                for part in msg.walk():
+                    if part.get_content_type() == "text/plain":
+                        content = part.get_payload(decode=True).decode(
+                            "utf-8", errors="replace"
+                        )
+                        match = VERIFY_LINK_REGEX.search(content)
+                        if match:
+                            return match.group(1)
+                        else:
+                            print("No verification link found in the email content.")
+                            return None
+            else:
+                content = msg.get_payload(decode=True).decode("utf-8", errors="replace")
                 match = VERIFY_LINK_REGEX.search(content)
                 if match:
                     return match.group(1)
                 else:
                     print("No verification link found in the email content.")
                     return None
-    else:
-        content = msg.get_payload(decode=True).decode("utf-8", errors="replace")
-        match = VERIFY_LINK_REGEX.search(content)
-        if match:
-            return match.group(1)
-        else:
-            print("No verification link found in the email content.")
-            return None
 
     mail.close()
     mail.logout()
@@ -107,3 +110,4 @@ else:
     print(
         "Error: Discord bot token not found. Please set the TOKEN environment variable."
     )
+
